@@ -1,4 +1,4 @@
-﻿// Escape-From-Duckov-Coop-Mod-Preview
+// Escape-From-Duckov-Coop-Mod-Preview
 // Copyright (C) 2025  Mr.sans and InitLoader's team
 //
 // This program is not a free software.
@@ -630,6 +630,10 @@ namespace 鸭科夫联机Mod
 
         public bool Pausebool;
 
+        // 传输层选择（预留 Steam 打洞/中继）
+        public bool preferSteamTransport = true;   // UI 可切换
+        private bool _steamAvailable = false;      // 运行时探测
+
         // 服务器：按 NetPeer 管理
         public readonly HashSet<int> _dedupeShotFrame = new HashSet<int>(); // 本帧已发过的标记
         public PlayerStatus localPlayerStatus;
@@ -1089,6 +1093,32 @@ namespace 鸭科夫联机Mod
             freezeAI = !isServer;
             IsServer = isServer;
             writer = new NetDataWriter();
+
+            // —— 优先尝试 Steam 传输 ——
+            _steamAvailable = SteamRuntime.IsAvailable();
+            if (preferSteamTransport && _steamAvailable)
+            {
+                if (TryStartSteamTransport(isServer))
+                {
+                    networkStarted = true;
+                    status = "已通过 Steam 网络启动（实验性）";
+                    hostList.Clear(); hostSet.Clear(); isConnecting = false; connectedPeer = null;
+                    playerStatuses.Clear(); remoteCharacters.Clear(); clientPlayerStatuses.Clear(); clientRemoteCharacters.Clear();
+                    InitializeLocalPlayer();
+                    if (IsServer)
+                    {
+                        ItemAgent_Gun.OnMainCharacterShootEvent -= Host_OnMainCharacterShoot;
+                        ItemAgent_Gun.OnMainCharacterShootEvent += Host_OnMainCharacterShoot;
+                    }
+                    return; // 成功使用 Steam，提前返回
+                }
+                else
+                {
+                    Debug.LogWarning("[NET] Steam 传输初始化失败，回退到 UDP/LAN (LiteNetLib)");
+                }
+            }
+
+            // —— 回退：LiteNetLib（原实现） ——
             netManager = new NetManager(this)
             {
                 BroadcastReceiveEnabled = true
@@ -1128,6 +1158,26 @@ namespace 鸭科夫联机Mod
             {
                 ItemAgent_Gun.OnMainCharacterShootEvent -= Host_OnMainCharacterShoot;
                 ItemAgent_Gun.OnMainCharacterShootEvent += Host_OnMainCharacterShoot;
+            }
+        }
+
+        // 占位：Steam 传输启动（不引入编译期依赖，使用反射/外部宿主实现）
+        // 返回 true 代表已接管网络层；当前占位返回 false 以回退到 LiteNetLib。
+        private bool TryStartSteamTransport(bool isServer)
+        {
+            try
+            {
+                // 在实际接入时，这里应：
+                // 1) 打开 SteamNetworkingSockets（创建监听或连接）
+                // 2) 绑定收发回调，调用本类的消息处理分发
+                // 3) 设置 networkStarted = true，并维护“已连接 peers”列表的镜像
+                // 由于本仓库未引入 Steamworks 绑定，这里先占位返回 false。
+                return false;
+            }
+            catch (Exception e)
+            {
+                UnityEngine.Debug.LogError("[NET] TryStartSteamTransport 异常: " + e.Message);
+                return false;
             }
         }
 
@@ -4695,6 +4745,17 @@ namespace 鸭科夫联机Mod
         {
             GUILayout.BeginVertical();
             GUILayout.Label($"当前模式: {(IsServer ? "服务器" : "客户端")}");
+            // 传输层选择（Steam/UDP）
+            try
+            {
+                bool avail = SteamRuntime.IsAvailable();
+                preferSteamTransport = GUILayout.Toggle(preferSteamTransport, $"优先使用 Steam 联网（{(avail ? "可用" : "不可用")}）");
+                if (preferSteamTransport && !avail)
+                {
+                    GUILayout.Label("提示：当前进程未检测到 Steam API，将回退到 UDP/LAN", GUILayout.ExpandWidth(false));
+                }
+            }
+            catch { }
 
             if (GUILayout.Button("切换到" + (IsServer ? "客户端" : "服务器") + "模式"))
             {
